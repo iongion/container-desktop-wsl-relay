@@ -86,7 +86,8 @@ async function main() {
                 "./container-desktop-wsl-relay",
                 `--socket=${UNIX_SOCKET}`,
                 `--pipe=${NAMED_PIPE}`,
-                `--relay-program-path=${relayProgramPath}`
+                `--relay-program-path=${relayProgramPath}`,
+                "--pid-file", "container-desktop-wsl-relay.pid"
             ],
             // Chunk handler
             (chunk) => {

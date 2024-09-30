@@ -17,19 +17,19 @@ import (
 )
 
 var (
+	// Spawner parameters
 	distribution     string
 	socketPath       string
-	namedPipe        string
 	relayProgramPath string
 	pidFile          string
-	bufferSize       int
+	// Relay parameters
+	namedPipe   string
+	permissions string
+	bufferSize  int64
 )
 
 var signalChan chan (os.Signal) = make(chan os.Signal, 1)
 var cmd *exec.Cmd
-var stdinPipe io.WriteCloser
-var stdoutPipe io.ReadCloser
-var conn net.Conn
 var closed = false
 
 func init() {
@@ -37,7 +37,10 @@ func init() {
 	flag.StringVar(&socketPath, "socket", "/var/run/docker.sock", "Container engine socket path")
 	flag.StringVar(&namedPipe, "pipe", "\\\\.\\pipe\\container-desktop", "Named pipe to relay through")
 	flag.StringVar(&relayProgramPath, "relay-program-path", "container-desktop-wsl-relay.exe", "Named pipe relay program path")
-	flag.StringVar(&pidFile, "pid-file", "", "PID file path")
+	flag.StringVar(&pidFile, "pid-file", "", "The WSL PID file path - This is a Linux file-system path")
+	// Relay parameters
+	flag.StringVar(&permissions, "permissions", "AllowCurrentUser", "See more in the container-desktop-relay.exe usage.")
+	flag.Int64Var(&bufferSize, "buffer-size", 512, "I/O buffer size in bytes")
 	flag.Usage = func() {
 		flag.PrintDefaults()
 	}
@@ -126,17 +129,6 @@ func main() {
 		cmd.Process.Kill()
 		syscall.Kill(cmd.Process.Pid, syscall.SIGTERM)
 		log.Println("Command killed")
-		/*
-			pgid, err := syscall.Getpgid(cmd.Process.Pid)
-			if err == nil {
-				err = syscall.Kill(-pgid, syscall.SIGINT)
-				if err != nil {
-					log.Printf("Failed to kill process group: %v", err)
-				}
-			} else {
-				log.Printf("Failed to get process group ID: %v", err)
-			}
-		*/
 		os.Exit(0)
 	}()
 
@@ -152,9 +144,22 @@ retry:
 	defer conn.Close()
 
 	// Start the Windows executable as a subprocess (once)
-	log.Printf("Starting Windows relay executable: %s --pipe=%s --distribution=%s --parent-pid=%s", relayProgramPath, namedPipe, distribution, strconv.Itoa(os.Getpid()))
-	// cmd = exec.Command(relayProgramPath, "--pipe", namedPipe)
-	cmd := exec.CommandContext(ctx, relayProgramPath, "--pipe", namedPipe, "--distribution", distribution, "--parent-pid", strconv.Itoa(os.Getpid()))
+	relayNativeWindowsPidFilePath := ""
+	if len(pidFile) > 0 {
+		relayNativeWindowsPidFilePath = strings.Replace(pidFile, ".pid", "-relay-windows.pid", 1)
+	}
+	log.Printf(
+		`%s --pipe="%s" --distribution="%s" --parent-pid="%s" --permissions="%s" --pidFile="%s"`,
+		relayProgramPath, namedPipe, distribution, strconv.Itoa(os.Getpid()), permissions, relayNativeWindowsPidFilePath,
+	)
+	cmd := exec.CommandContext(ctx,
+		relayProgramPath,
+		"--pipe", namedPipe,
+		"--distribution", distribution,
+		"--parent-pid", strconv.Itoa(os.Getpid()),
+		"--permissions", permissions,
+		"--pid-file", relayNativeWindowsPidFilePath,
+	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: 0}
 	cmd.Stderr = os.Stderr
 
@@ -176,8 +181,8 @@ retry:
 	log.Printf("Started Windows relay executable: %s PID: %d", relayProgramPath, cmd.Process.Pid)
 	// Write the PID of the relay process to a file
 	if len(pidFile) > 0 {
-		relayPidFile := strings.Replace(pidFile, ".pid", "-relay.pid", 1)
-		log.Printf("Writing relay PID %d to %s\n", cmd.Process.Pid, relayPidFile)
+		relayPidFile := strings.Replace(pidFile, ".pid", "-relay-linux.pid", 1)
+		log.Printf("Writing relay linux PID %d to %s\n", cmd.Process.Pid, relayPidFile)
 		pidContents := []byte(strconv.FormatInt(int64(cmd.Process.Pid), 10))
 		err := os.WriteFile(relayPidFile, pidContents, 0644)
 		if err != nil {

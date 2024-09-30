@@ -30,3 +30,6 @@ go.work.sum
 # node
 package-lock.json
 node_modules
+
+# Generated
+container-desktop-wsl-relay*

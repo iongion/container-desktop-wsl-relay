@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -32,6 +33,8 @@ var (
 	parentPid    int64
 	namedPipe    string
 	permissions  string
+	bufferSize   int64
+	pidFile      string
 )
 
 var signalChan chan (os.Signal) = make(chan os.Signal, 1)
@@ -41,6 +44,8 @@ func init() {
 	flag.Int64Var(&parentPid, "parent-pid", -1, "Parent WSL Distribution process ID")
 	flag.StringVar(&namedPipe, "pipe", "\\\\.\\pipe\\container-desktop", "Named pipe to relay through")
 	flag.StringVar(&permissions, "permissions", "AllowCurrentUser", fmt.Sprintf("Named pipe permissions specifier - see https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights\nAvailable are:\n\tAllowServiceSystemAdmin=%s\n\tAllowCurrentUser=%s\n\tAllowEveryone=%s\n", AllowServiceSystemAdmin, AllowCurrentUser, AllowEveryone))
+	flag.Int64Var(&bufferSize, "buffer-size", IO_BUFFER_SIZE, "I/O buffer size in bytes")
+	flag.StringVar(&pidFile, "pid-file", "", "PID file path - The native Windows path where the native Windows PID is to be written")
 	flag.Usage = func() {
 		flag.PrintDefaults()
 	}
@@ -61,7 +66,7 @@ func handleClient(conn net.Conn) {
 	// Read from stdin and send to channel
 	go func() {
 		for {
-			buffer := make([]byte, IO_BUFFER_SIZE)
+			buffer := make([]byte, bufferSize)
 			n, err := os.Stdin.Read(buffer)
 			if err != nil {
 				if err != io.EOF {
@@ -77,7 +82,7 @@ func handleClient(conn net.Conn) {
 	// Read from connection and send to channel
 	go func() {
 		for {
-			buffer := make([]byte, IO_BUFFER_SIZE)
+			buffer := make([]byte, bufferSize)
 			n, err := conn.Read(buffer)
 			if err != nil {
 				if err != io.EOF {
@@ -166,15 +171,25 @@ func main() {
 			}
 			securityDescriptor = strings.Replace(securityDescriptor, "$SID", currentUser.Uid, 1)
 		}
-		// log.Printf("Computed permissions are: %s\n", securityDescriptor)
+		log.Printf("Computed permissions are: %s\n", securityDescriptor)
+	}
+
+	// Write the PID of current process
+	if len(pidFile) > 0 {
+		log.Printf("Writing relay Windows PID %d to %s\n", os.Getpid(), pidFile)
+		pidContents := []byte(strconv.FormatInt(int64(os.Getpid()), 10))
+		err := os.WriteFile(pidFile, pidContents, 0644)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	// Configure named pipe
 	pc := &winio.PipeConfig{
 		SecurityDescriptor: securityDescriptor,
 		MessageMode:        false,
-		InputBufferSize:    IO_BUFFER_SIZE,
-		OutputBufferSize:   IO_BUFFER_SIZE,
+		InputBufferSize:    int32(bufferSize),
+		OutputBufferSize:   int32(bufferSize),
 	}
 	// Listen on the named pipe
 	listener, err := winio.ListenPipe(namedPipe, pc)
