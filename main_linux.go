@@ -20,15 +20,16 @@ import (
 
 var (
 	// Spawner parameters
-	distribution     string
-	socketPath       string
-	relayProgramPath string
-	pidFile          string
+	distribution string
+	socketPath   string
+	pidFile      string
 	// Relay parameters
-	namedPipe    string
-	permissions  string
-	bufferSize   int64
-	pollInterval = 2
+	relayProgramPath string
+	foreground       bool
+	namedPipe        string
+	permissions      string
+	bufferSize       int64
+	pollInterval     = 2
 )
 
 var signalChan chan (os.Signal) = make(chan os.Signal, 1)
@@ -40,9 +41,10 @@ func init() {
 	flag.StringVar(&distribution, "distribution", os.Getenv(("WSL_DISTRO_NAME")), "WSL Distribution name")
 	flag.StringVar(&socketPath, "socket", "/var/run/docker.sock", "Container engine socket path")
 	flag.StringVar(&namedPipe, "pipe", "\\\\.\\pipe\\container-desktop", "Named pipe to relay through")
-	flag.StringVar(&relayProgramPath, "relay-program-path", "container-desktop-wsl-relay.exe", "Named pipe relay program path")
 	flag.StringVar(&pidFile, "pid-file", "", "The WSL PID file path - This is a Linux file-system path")
 	// Relay parameters
+	flag.StringVar(&relayProgramPath, "relay-program-path", "container-desktop-wsl-relay.exe", "Named pipe relay program path")
+	flag.BoolVar(&foreground, "foreground", false, "Run the relay program in the foreground")
 	flag.StringVar(&permissions, "permissions", "AllowCurrentUser", "See more in the container-desktop-relay.exe usage.")
 	flag.Int64Var(&bufferSize, "buffer-size", 512, "I/O buffer size in bytes")
 	flag.IntVar(&pollInterval, "poll-interval", 2, "Parent process polling interval in seconds - default is 2 seconds")
@@ -180,7 +182,7 @@ retry:
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:    true,
 		Pgid:       os.Getpid(),
-		Foreground: true,
+		Foreground: foreground,
 		Pdeathsig:  syscall.SIGINT,
 	}
 	cmd.Stderr = os.Stderr
