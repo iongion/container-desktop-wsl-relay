@@ -29,8 +29,8 @@ var (
 )
 
 var signalChan chan (os.Signal) = make(chan os.Signal, 1)
-var cmd *exec.Cmd
 var closed = false
+var pid = -1
 
 func init() {
 	flag.StringVar(&distribution, "distribution", os.Getenv(("WSL_DISTRO_NAME")), "WSL Distribution name")
@@ -125,9 +125,13 @@ func main() {
 		<-signalChan
 		signal.Stop(signalChan)
 		cancelFunc()
-		log.Println("Exit trapped - closing connection")
-		cmd.Process.Kill()
-		syscall.Kill(cmd.Process.Pid, syscall.SIGTERM)
+		log.Println("Exit trapped - closing connection - killing command", pid)
+		if pid > 0 {
+			err := syscall.Kill(pid, syscall.SIGTERM)
+			if err != nil {
+				log.Fatalf("Unable to kill command process: %v", err)
+			}
+		}
 		log.Println("Command killed")
 		os.Exit(0)
 	}()
@@ -160,7 +164,12 @@ retry:
 		"--permissions", permissions,
 		"--pid-file", relayNativeWindowsPidFilePath,
 	)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: 0}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid:    true,
+		Pgid:       0,
+		Foreground: false,
+		// CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
+	}
 	cmd.Stderr = os.Stderr
 
 	// Redirect stdin and stdout to the subprocess (single connection)
@@ -179,6 +188,7 @@ retry:
 	}
 
 	log.Printf("Started Windows relay executable: %s PID: %d", relayProgramPath, cmd.Process.Pid)
+	pid = cmd.Process.Pid
 	// Write the PID of the relay process to a file
 	if len(pidFile) > 0 {
 		relayPidFile := strings.Replace(pidFile, ".pid", "-relay-linux.pid", 1)

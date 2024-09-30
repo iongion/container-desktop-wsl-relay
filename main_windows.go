@@ -101,6 +101,7 @@ func handleClient(conn net.Conn) {
 		case data, ok := <-stdinCh:
 			if !ok {
 				// stdin channel closed, stop processing
+				log.Printf("[stdin.closed] Client disconnected [%s]", conn.RemoteAddr().Network())
 				return
 			}
 			_, err := conn.Write(data)
@@ -111,6 +112,7 @@ func handleClient(conn net.Conn) {
 		case data, ok := <-connCh:
 			if !ok {
 				// connection channel closed, stop processing
+				log.Printf("[conn.closed] Client disconnected [%s]", conn.RemoteAddr().Network())
 				return
 			}
 			_, err := os.Stdout.Write(data)
@@ -139,8 +141,8 @@ func main() {
 
 	// Termination signals
 	go func() {
-		log.Println("Received termination signal")
 		<-signalChan
+		log.Println("Received termination signal")
 		signal.Stop(signalChan)
 		cancelFunc()
 		err := listener.Close()

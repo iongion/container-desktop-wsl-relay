@@ -20,6 +20,7 @@ echo "Building container-desktop-wsl-relay"
 export GOOS=linux
 export GOARCH=amd64
 go build --ldflags '-s -w -linkmode external -extldflags "-fno-PIC -static"' -buildmode pie -tags "osusergo netgo static_build"
+chmod +x container-desktop-wsl-relay
 
 echo "Compress container-desktop-wsl-relay"
 upx -9 container-desktop-wsl-relay
@@ -34,6 +35,7 @@ export CGO_ENABLED=1
 export CXX=x86_64-w64-mingw32-g++
 export CC=x86_64-w64-mingw32-gcc
 go build --ldflags '-s -w -linkmode external -extldflags "-fno-PIC -static"' -buildmode pie -tags "osusergo netgo static_build"
+chmod +x container-desktop-wsl-relay.exe
 
 echo "Compress container-desktop-wsl-relay.exe"
 upx -9 container-desktop-wsl-relay.exe
