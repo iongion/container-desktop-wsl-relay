@@ -7,20 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 1.0.4 - 2024-09-30
+
+### Changed
+
+- Graceful close of the native windows relay
+- Optional `--pid-file` argument, pass it only if not empty
+
 ## 1.0.3 - 2024-09-30
 
-## Changed
+### Changed
 
 - Use signal to termination due to parent process not being present anymore
 
 ## 1.0.2 - 2024-09-30
 
-## Fixed
+### Fixed
 
 - The `container-desktop-wsl-relay.exe` is now able to close itself
 
 ## 1.0.1 - 2024-09-30
 
-## Added
+### Added
 
 - Initial release

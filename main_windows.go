@@ -98,7 +98,6 @@ func init() {
 }
 
 var stdinCh = make(chan []byte)
-var listener net.Listener
 
 func handleClient(conn net.Conn) {
 	defer conn.Close()
@@ -188,11 +187,9 @@ func main() {
 		<-signalChan
 		log.Println("Received termination signal")
 		signal.Stop(signalChan)
-		err := listener.Close()
-		if err != nil {
-			log.Println("Unable to close listener", err)
-		}
+		log.Println("Canceling context")
 		cancelFunc()
+		log.Println("Exiting")
 		os.Exit(0)
 	}()
 

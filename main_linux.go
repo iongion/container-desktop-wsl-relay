@@ -167,14 +167,16 @@ retry:
 		`%s --pipe="%s" --distribution="%s" --parent-pid="%s" --permissions="%s" --pidFile="%s"`,
 		relayProgramPath, namedPipe, distribution, strconv.Itoa(os.Getpid()), permissions, relayNativeWindowsPidFilePath,
 	)
-	cmd := exec.CommandContext(ctx,
-		relayProgramPath,
+	cmdArgs := []string{
 		"--pipe", namedPipe,
 		"--distribution", distribution,
 		"--parent-pid", strconv.Itoa(os.Getpid()),
 		"--permissions", permissions,
-		"--pid-file", relayNativeWindowsPidFilePath,
-	)
+	}
+	if len(relayNativeWindowsPidFilePath) > 0 {
+		cmdArgs = append(cmdArgs, "--pid-file", relayNativeWindowsPidFilePath)
+	}
+	cmd := exec.CommandContext(ctx, relayProgramPath, cmdArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:    true,
 		Pgid:       os.Getpid(),
