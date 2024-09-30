@@ -60,6 +60,7 @@ node.exe relay-test.js
 - **AllowEveryone** = `"S:(ML;;NW;;;LW)D:(A;;0x12019f;;;WD)"` - _AllowEveryone - **to be avoided**, allows any users running on current machine._
 - **AllowCurrentUser** = `"D:P(A;;GA;;;$SID)"` - _AllowCurrentUser grants full access permissions for the current user. The variable `$SID` is interpolated at runtime._
 - **AllowServiceSystemAdmin** = `"D:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;LA)(A;ID;FA;;;LS)"` - _AllowServiceSystemAdmin grants full access permissions for Service, System, Administrator group and account._
+- If the permission don't match the strings above, any ACL expression can be used.
 
 ## Usage
 
@@ -71,7 +72,7 @@ export RELAY_PIPE="\\\\.pipe\\container-desktop-relay-docker"
 ./container-desktop-wsl-relay --socket "$RELAY_SOCKET" --pipe "$RELAY_PIPE" --relay-program-path "$PROJECT_HOME/container-desktop-wsl-relay.exe"
 ```
 
-Using a node-js child_process started from Windows
+Test using a NodeJS `child_process` started by the **Windows** native `node.exe` interpreter. This can be executed from any shell.
 
 ```shell
 node.exe relay-test.js
