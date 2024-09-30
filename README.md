@@ -21,7 +21,6 @@ sequenceDiagram
     Windows-->>NamedPipe: Listen to named pipe and connect stdin and stdout to named pipe
     NamedPipe<<-->>UnixSocket: Bidirectional communication (unix socket <=> named pipe)
     Client<<-->>NamedPipe: Client can initiate bidirectional communication with the named pipe, data being relayed to the unix socket
-    NamedPipe<<-->>UnixSocket: Relay between named pipe and unix socket
 ```
 
 ## Requirements
