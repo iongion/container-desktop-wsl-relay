@@ -6,6 +6,7 @@ Relay WSL unix sockets through windows named pipes by using a relay proxy native
 
 - Although `AF_UNIX` support exists in Windows, as of `30.09.2024`, native programs cannot use unix sockets from WSL 2, see <https://github.com/microsoft/WSL/issues/5961>. They are supported in WSL 1 though.
 - Spawning TCP listeners on `localhost` would be easy, but it is not secure as any users logged-in to the machine can listen to them. In some environments, this might not be acceptable.
+- **Personal note** - I wish this utility wouldn't exist and WSL 2 sockets can be used by native windows programs, just as WSL 1.
 
 ## Using the named pipe
 
