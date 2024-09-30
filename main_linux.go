@@ -25,9 +25,10 @@ var (
 	relayProgramPath string
 	pidFile          string
 	// Relay parameters
-	namedPipe   string
-	permissions string
-	bufferSize  int64
+	namedPipe    string
+	permissions  string
+	bufferSize   int64
+	pollInterval = 2
 )
 
 var signalChan chan (os.Signal) = make(chan os.Signal, 1)
@@ -44,6 +45,7 @@ func init() {
 	// Relay parameters
 	flag.StringVar(&permissions, "permissions", "AllowCurrentUser", "See more in the container-desktop-relay.exe usage.")
 	flag.Int64Var(&bufferSize, "buffer-size", 512, "I/O buffer size in bytes")
+	flag.IntVar(&pollInterval, "poll-interval", 2, "Parent process polling interval in seconds - default is 2 seconds")
 	flag.Usage = func() {
 		flag.PrintDefaults()
 	}
@@ -175,10 +177,9 @@ retry:
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid:    true,
-		Pgid:       0,
-		Foreground: false,
-		// Pdeathsig:  syscall.SIGKILL,
-		// CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
+		Pgid:       os.Getpid(),
+		Foreground: true,
+		Pdeathsig:  syscall.SIGINT,
 	}
 	cmd.Stderr = os.Stderr
 

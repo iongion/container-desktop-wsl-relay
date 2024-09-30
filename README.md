@@ -78,6 +78,6 @@ Test using a NodeJS `child_process` started by the **Windows** native `node.exe`
 node.exe relay-test.js
 ```
 
-## Pitfalls
+## Notes
 
-As of version `1.0.1` I am unable to ensure that the spawned windows native executable dies when parent WSL linux native spawner gets killed or exits, I am looking for options.
+- The spawned Windows native `container-desktop-wsl-relay.exe` is checking every `2` seconds if the parent process that spawned it has died, in such case it exits.

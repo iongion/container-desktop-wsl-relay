@@ -1,6 +1,6 @@
 {
   "name": "container-desktop-wsl-relay",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Relay WSL unix sockets through windows named pipes",
   "main": "relay-test.js",
   "scripts": {

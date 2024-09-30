@@ -12,11 +12,14 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Microsoft/go-winio"
+	"github.com/keybase/go-ps"
 )
 
 // See https://github.com/docker/go-plugins-helpers/blob/main/sdk/windows_listener.go
@@ -32,18 +35,51 @@ const (
 
 var (
 	distribution string
-	parentPid    int64
+	parentPid    int
 	namedPipe    string
 	permissions  string
 	bufferSize   int64
 	pidFile      string
+	pollInterval = 2
 )
 
 var signalChan chan (os.Signal) = make(chan os.Signal, 1)
 
+func isProcessRunning(pid int) bool {
+	// See https://github.com/golang/go/issues/33814
+	// For testing shutdown use: powershell.exe -Command Start-Process -FilePath container-desktop-wsl-relay.exe -Wait
+	process, err := ps.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		// log.Printf("Checking for running process ID %d - %v\n", pid, process)
+		if process != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func watchParentProcess(parentPid int) {
+	for {
+		if parentPid > 0 {
+			// log.Printf("Parent process ID is %d\n", parentPid)
+			if !isProcessRunning(parentPid) {
+				log.Printf("Parent process ID %d is no longer running - shutting down\n", parentPid)
+				os.Exit(0)
+			}
+		} else {
+			log.Println("Parent process ID is not provided yet")
+		}
+		time.Sleep(time.Duration(pollInterval) * time.Second)
+	}
+}
+
 func init() {
 	flag.StringVar(&distribution, "distribution", os.Getenv("WSL_DISTRO_NAME"), "WSL Distribution name of the parent process")
-	flag.Int64Var(&parentPid, "parent-pid", -1, "Parent WSL Distribution process ID")
+	flag.IntVar(&parentPid, "parent-pid", -1, "Parent WSL Distribution process ID")
+	flag.IntVar(&pollInterval, "poll-interval", 2, "Parent process polling interval in seconds - default is 2 seconds")
 	flag.StringVar(&namedPipe, "pipe", "\\\\.\\pipe\\container-desktop", "Named pipe to relay through")
 	flag.StringVar(&permissions, "permissions", "AllowCurrentUser", fmt.Sprintf("Named pipe permissions specifier - see https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights\nAvailable are:\n\tAllowServiceSystemAdmin=%s\n\tAllowCurrentUser=%s\n\tAllowEveryone=%s\n", AllowServiceSystemAdmin, AllowCurrentUser, AllowEveryone))
 	flag.Int64Var(&bufferSize, "buffer-size", IO_BUFFER_SIZE, "I/O buffer size in bytes")
@@ -51,8 +87,14 @@ func init() {
 	flag.Usage = func() {
 		flag.PrintDefaults()
 	}
-	log.SetOutput(os.Stderr)
 	log.SetPrefix("[windows]")
+	log.SetOutput(os.Stderr)
+	// logFile, err := os.OpenFile("container-desktop-wsl-relay.exe.log", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// mw := io.MultiWriter(os.Stderr, logFile)
+	// log.SetOutput(mw)
 }
 
 var stdinCh = make(chan []byte)
@@ -188,6 +230,13 @@ func main() {
 		}
 	}
 
+	if parentPid > 0 {
+		log.Printf("Reported parent process ID is %d\n", parentPid)
+		// if os.Getppid() != int(parentPid) {
+		// 	log.Fatalf("Parent process ID %d does not match expected %d", os.Getppid(), parentPid)
+		// }
+	}
+
 	// Configure named pipe
 	pc := &winio.PipeConfig{
 		SecurityDescriptor: securityDescriptor,
@@ -202,6 +251,7 @@ func main() {
 	}
 	defer listener.Close()
 	log.Printf("Relay server is now listening on: %s\n", namedPipe)
+	go watchParentProcess(os.Getppid())
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
