@@ -19,7 +19,7 @@ sequenceDiagram
     WSL-->>Windows: Spawn native windows container-desktop-relay.exe
     Windows-->>NamedPipe: Listen to named pipe and connect stdin and stdout to named pipe
     NamedPipe<<-->>UnixSocket: Bidirectional communication (unix socket <=> named pipe)
-    Client<<-->>NamedPipe: Client can initiate bidirectional communicate with named pipe
+    Client<<-->>NamedPipe: Client can initiate bidirectional communication with the named pipe, data being relayed to the unix socket
     NamedPipe<<-->>UnixSocket: Relay between named pipe and unix socket
 ```
 
