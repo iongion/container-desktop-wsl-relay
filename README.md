@@ -1,6 +1,6 @@
 # container-desktop-wsl-relay
 
-Relay WSL unix sockets through windows named pipes by using a relay proxy native windows program.
+Relay WSL unix sockets through windows named pipes by using a relay proxy native windows program's stdin and stdout.
 
 ## Why
 
