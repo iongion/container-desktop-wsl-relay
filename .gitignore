@@ -13,9 +13,12 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+container-desktop-wsl-relay
+container-desktop-wsl-relay.exe
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+bin/
 
 # Go workspace file
 go.work
@@ -23,3 +26,7 @@ go.work.sum
 
 # env file
 .env
+
+# node
+package-lock.json
+node_modules

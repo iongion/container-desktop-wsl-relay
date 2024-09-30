@@ -1,0 +1,14 @@
+{
+  "name": "container-desktop-wsl-relay",
+  "version": "1.0.1",
+  "description": "Relay WSL unix sockets through windows named pipes",
+  "main": "relay-test.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "stoica.ionut<stoica.ionut@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "0.28.1"
+  }
+}
