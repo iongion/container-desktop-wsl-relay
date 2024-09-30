@@ -146,11 +146,11 @@ func main() {
 		<-signalChan
 		log.Println("Received termination signal")
 		signal.Stop(signalChan)
-		cancelFunc()
 		err := listener.Close()
 		if err != nil {
 			log.Println("Unable to close listener", err)
 		}
+		cancelFunc()
 		os.Exit(0)
 	}()
 
