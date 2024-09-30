@@ -64,10 +64,10 @@ func isProcessRunning(pid int) bool {
 func watchParentProcess(parentPid int) {
 	for {
 		if parentPid > 0 {
-			// log.Printf("Parent process ID is %d\n", parentPid)
 			if !isProcessRunning(parentPid) {
 				log.Printf("Parent process ID %d is no longer running - shutting down\n", parentPid)
-				os.Exit(0)
+				signalChan <- syscall.SIGINT
+				return
 			}
 		} else {
 			log.Println("Parent process ID is not provided yet")
