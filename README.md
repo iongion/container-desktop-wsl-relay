@@ -14,13 +14,14 @@ Flow of communication
 
 ```mermaid
 sequenceDiagram
-    Client->>+WSL: Start wsl.exe linux native container-desktop-relay
-    WSL-->>UnixSocket: Listen to UNIX socket(loop forever until able to connect)
-    UnixSocket<<-->>WSL: Bidirectional communication
-    WSL-->>Windows: Spawn native windows container-desktop-relay.exe
-    Windows-->>NamedPipe: Listen to named pipe and connect stdin and stdout to named pipe
+    Windows-->>Windows: Spawn native windows container-desktop-relay.exe
+    Windows-->>NamedPipe: Spawn named pipe server
+    Windows-->>WSL: Launch WSL linux program - Listen to STDIO
+    WSL-->>UnixSocket: Listen to UNIX socket - Write STDIN data to socket
+    UnixSocket-->>WSL: Write socket data to STDOUT 
+    NamedPipe-->>WSL: Write data to WSL process STDIN
+    WSL-->>NamedPipe: Read data from WSL process STDOUT
     NamedPipe<<-->>UnixSocket: Bidirectional communication (unix socket <=> named pipe)
-    Client<<-->>NamedPipe: Client can initiate bidirectional communication with the named pipe, data being relayed to the unix socket
 ```
 
 ## Requirements
