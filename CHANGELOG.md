@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 1.0.6 - 2024-10-02
+
+### Added
+
+- Added retry mechanism for when the unix socket is not yet available
+
 ## 1.0.5 - 2024-10-02
 
 ### Changed

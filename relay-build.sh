@@ -31,18 +31,17 @@ GOOS=windows GOARCH=amd64 go build --ldflags '-s -w -extldflags "-fno-PIC -stati
 chmod +x "$PROJECT_HOME/bin/container-desktop-wsl-relay.exe"
 upx -9 "$PROJECT_HOME/bin/container-desktop-wsl-relay.exe"
 
-if [[ -f "$PROJECT_HOME/bin/container-desktop-wsl-relay2" ]]; then
+if [[ -f "$PROJECT_HOME/bin/container-desktop-wsl-relay" ]]; then
   echo "socat already exists in $PROJECT_HOME/bin/container-desktop-wsl-relay"
 else
   cd "$PROJECT_HOME/vendors/socat-${SOCAT_VERSION}"
-
   # Additional flags (if needed)
   export CC="musl-gcc"
   export LD="musl-ld"
   export CFLAGS="-O2 -Wall"
   export LDFLAGS="-static"
   export TARGET=x86_64-linux-musl
-
+  # Static build
   ./configure \
     --prefix="$PROJECT_HOME" \
     --enable-msglevel=DEBUG \
@@ -80,10 +79,12 @@ else
     --disable-filan \
     --disable-libwrap \
     && echo "Configured socat with minimal features"
-
   echo "Building socat"
   make clean
   make socat
   strip -S socat
   cp socat "$PROJECT_HOME/bin/container-desktop-wsl-relay"
 fi
+
+sha256sum "$PROJECT_HOME/bin/container-desktop-wsl-relay.exe" > "$PROJECT_HOME/bin/container-desktop-wsl-relay.exe.sha256"
+sha256sum "$PROJECT_HOME/bin/container-desktop-wsl-relay" > "$PROJECT_HOME/bin/container-desktop-wsl-relay.sha256"

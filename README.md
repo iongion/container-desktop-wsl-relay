@@ -2,6 +2,8 @@
 
 Relay WSL unix sockets through windows named pipes by using a relay proxy native windows program's stdin and stdout.
 
+Think of it as the inverse of `npiperelay.exe`
+
 ## Why
 
 - Although `AF_UNIX` support exists in Windows, as of `30.09.2024`, native programs cannot use unix sockets from WSL 2, see <https://github.com/microsoft/WSL/issues/5961>. They are supported in WSL 1 though.
@@ -78,13 +80,50 @@ RELAY_SOCKET=$(docker context inspect --format json | jq -e ".[0].Endpoints.dock
 RELAY_PIPE="\\\\.\\pipe\\container-desktop-test"
 RELAY_PROGRAM="$PROJECT_HOME/bin/container-desktop-wsl-relay"
 
-./bin/container-desktop-wsl-relay.exe --distribution="$WSL_DISTRO_NAME" --named-pipe="$RELAY_PIPE" --unix-socket="$RELAY_SOCKET" -relay-program-path="$RELAY_PROGRAM"
+./bin/container-desktop-wsl-relay.exe \
+    --distribution="$WSL_DISTRO_NAME" \
+    --named-pipe="$RELAY_PIPE" \
+    --unix-socket="$RELAY_SOCKET" \
+    --relay-program-path="$RELAY_PROGRAM" \
+    --relay-program-options="retry,forever"
 ```
 
 Test using a NodeJS `child_process` started by the **Windows** native `node.exe` interpreter. This can be executed from any shell.
 
 ```shell
 node.exe relay-test.js
+```
+
+## Options
+
+```shell
+container-desktop-wsl-relay.exe --help
+
+  -buffer-size int
+        I/O buffer size in bytes (default 512)
+  -distribution string
+        WSL Distribution name of the parent process
+  -named-pipe string
+        Named pipe to relay through (default "\\\\.\\pipe\\container-desktop")
+  -parent-pid int
+        Parent WSL Distribution process ID (default -1)
+  -permissions string
+        Named pipe permissions specifier - see https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights
+        Available are:
+                AllowServiceSystemAdmin=D:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;LA)(A;ID;FA;;;LS)
+                AllowCurrentUser=D:P(A;;GA;;;$SID)
+                AllowEveryone=S:(ML;;NW;;;LW)D:(A;;0x12019f;;;WD)
+         (default "AllowCurrentUser")
+  -pid-file string
+        PID file path - The native Windows path where the native Windows PID is to be written
+  -poll-interval int
+        Parent process polling interval in seconds - default is 2 seconds (default 2)
+  -relay-program-options string
+        The options to pass to the WSL relay program(socat UNIX-CONNECT options) (default "retry,forever")
+  -relay-program-path string
+        The path to the WSL relay program (default "./socat-static")
+  -unix-socket string
+        The Unix socket to relay through (default "/var/run/docker.sock")
 ```
 
 ## Notes

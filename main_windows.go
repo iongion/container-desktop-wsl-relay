@@ -35,15 +35,16 @@ const (
 )
 
 var (
-	distribution     string
-	parentPid        int
-	namedPipe        string
-	permissions      string
-	bufferSize       int64
-	pidFile          string
-	pollInterval     = 2
-	unixSocket       string
-	relayProgramPath string
+	distribution        string
+	parentPid           int
+	namedPipe           string
+	permissions         string
+	bufferSize          int64
+	pidFile             string
+	pollInterval        = 2
+	unixSocket          string
+	relayProgramPath    string
+	relayProgramOptions string
 )
 
 var signalChan chan (os.Signal) = make(chan os.Signal, 1)
@@ -89,6 +90,7 @@ func init() {
 	flag.Int64Var(&bufferSize, "buffer-size", IO_BUFFER_SIZE, "I/O buffer size in bytes")
 	flag.StringVar(&pidFile, "pid-file", "", "PID file path - The native Windows path where the native Windows PID is to be written")
 	flag.StringVar(&relayProgramPath, "relay-program-path", "./socat-static", "The path to the WSL relay program")
+	flag.StringVar(&relayProgramOptions, "relay-program-options", "retry,forever", "The options to pass to the WSL relay program(socat UNIX-CONNECT options)")
 	flag.Usage = func() {
 		flag.PrintDefaults()
 	}
@@ -254,13 +256,18 @@ func main() {
 	defer listener.Close()
 	log.Printf("Relay server is now listening on: %s\n", namedPipe)
 	go watchParentProcess(os.Getppid())
-
+	cmdOpts := []string{
+		unixSocket,
+	}
+	if len(relayProgramOptions) > 0 {
+		cmdOpts = append(cmdOpts, relayProgramOptions)
+	}
 	cmdArgs := []string{
 		"--distribution", distribution,
 		"--exec",
 		relayProgramPath,
 		"STDIO",
-		unixSocket,
+		fmt.Sprintf("UNIX-CONNECT:%s", strings.Join(cmdOpts, ",")),
 	}
 	log.Println("Starting Windows native STD relay executable with command: wsl.exe ", strings.Join(cmdArgs, " "))
 	cmd := exec.CommandContext(ctx, "wsl.exe", cmdArgs...)
