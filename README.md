@@ -51,6 +51,12 @@ sudo apt-get install build-essential gcc-mingw-w64 musl-tools golang upx-ucl
 
 ```bash
 ./relay-build.sh
+./relay-start.sh
+```
+
+From a powershell console
+
+```powershell
 npm install
 node.exe relay-test.js
 ```
@@ -64,12 +70,14 @@ node.exe relay-test.js
 
 ## Usage
 
-From a WSL terminal console
+From a WSL terminal bash console
 
-```shell
-export RELAY_SOCKET="/var/run/docker.sock"
-export RELAY_PIPE="\\\\.pipe\\container-desktop-relay-docker"
-./container-desktop-wsl-relay --socket "$RELAY_SOCKET" --pipe "$RELAY_PIPE" --relay-program-path "$PROJECT_HOME/container-desktop-wsl-relay.exe"
+```bash
+RELAY_SOCKET=$(docker context inspect --format json | jq -e ".[0].Endpoints.docker.Host | sub(\"unix://\"; \"\")" | tr -d '"')
+RELAY_PIPE="\\\\.\\pipe\\container-desktop-test"
+RELAY_PROGRAM="$PROJECT_HOME/bin/container-desktop-wsl-relay"
+
+./bin/container-desktop-wsl-relay.exe --distribution="$WSL_DISTRO_NAME" --named-pipe="$RELAY_PIPE" --unix-socket="$RELAY_SOCKET" -relay-program-path="$RELAY_PROGRAM"
 ```
 
 Test using a NodeJS `child_process` started by the **Windows** native `node.exe` interpreter. This can be executed from any shell.

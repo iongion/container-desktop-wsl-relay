@@ -8,9 +8,9 @@ replace (
 	golang.org/x/text => golang.org/x/text v0.3.3
 )
 
-require github.com/Microsoft/go-winio v0.6.2
-
 require (
-	github.com/keybase/go-ps v0.0.0-20190827175125-91aafc93ba19 // indirect
-	golang.org/x/sys v0.10.0 // indirect
+	github.com/Microsoft/go-winio v0.6.2
+	github.com/keybase/go-ps v0.0.0-20190827175125-91aafc93ba19
 )
+
+require golang.org/x/sys v0.10.0 // indirect

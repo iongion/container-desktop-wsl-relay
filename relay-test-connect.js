@@ -44,25 +44,4 @@ async function main() {
     }, 1500)
 }
 
-
-function signalHandler(signal) {
-    console.debug("Received exit signal", signal);
-    if (child) {
-        try {
-            console.debug("Killing child", child.pid);
-            // process.kill(child.pid, "SIGTERM");
-            child.kill();
-            child.unref();
-        } catch (error) {
-            console.error("Unable to kill child", error);
-        }
-    } else {
-        console.debug("No child to kill");
-    }
-    process.exit(0);
-}
-process.on('SIGINT', signalHandler);
-process.on('SIGTERM', signalHandler);
-process.on('SIGQUIT', signalHandler);
-
 main();

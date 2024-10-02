@@ -14,30 +14,76 @@ dir=$(
 SCRIPTPATH=$dir/$(basename -- "$SCRIPTPATH") || exit
 PROJECT_HOME="$(dirname "$SCRIPTPATH")"
 
+SOCAT_VERSION="1.8.0.1"
+SOCAT_TARBALL="socat-${SOCAT_VERSION}.tar.gz"
+SOCAT_PACKAGE="http://www.dest-unreach.org/socat/download/${SOCAT_TARBALL}"
+
 mkdir -p "$PROJECT_HOME/bin"
+mkdir -p "$PROJECT_HOME/vendors"
 
-echo "Building container-desktop-wsl-relay"
-export GOOS=linux
-export GOARCH=amd64
-go build --ldflags '-s -w -linkmode external -extldflags "-fno-PIC -static"' -buildmode pie -tags "osusergo netgo static_build"
-chmod +x container-desktop-wsl-relay
+if [[ ! -f "$PROJECT_HOME/vendors/${SOCAT_TARBALL}" ]]; then
+  echo "Downloading socat ${SOCAT_VERSION} from $SOCAT_PACKAGE"
+  curl -L "$SOCAT_PACKAGE" -o "$PROJECT_HOME/vendors/${SOCAT_TARBALL}"
+  tar -xzf "$PROJECT_HOME/vendors/${SOCAT_TARBALL}" -C "$PROJECT_HOME/vendors"
+fi
 
-echo "Compress container-desktop-wsl-relay"
-upx -9 container-desktop-wsl-relay
-mkdir -p "$PROJECT_HOME/bin"
-cp container-desktop-wsl-relay "$PROJECT_HOME/bin"
+GOOS=windows GOARCH=amd64 go build --ldflags '-s -w -extldflags "-fno-PIC -static"' -buildmode pie -tags "osusergo netgo static_build" -o "$PROJECT_HOME/bin/container-desktop-wsl-relay.exe"
+chmod +x "$PROJECT_HOME/bin/container-desktop-wsl-relay.exe"
+upx -9 "$PROJECT_HOME/bin/container-desktop-wsl-relay.exe"
 
-echo "Building container-desktop-wsl-relay.exe"
-# sudo apt-get install gcc-mingw-w64 -y
-export GOOS=windows
-export GOARCH=amd64
-export CGO_ENABLED=1
-export CXX=x86_64-w64-mingw32-g++
-export CC=x86_64-w64-mingw32-gcc
-go build --ldflags '-s -w -linkmode external -extldflags "-fno-PIC -static"' -buildmode pie -tags "osusergo netgo static_build"
-chmod +x container-desktop-wsl-relay.exe
+if [[ -f "$PROJECT_HOME/bin/container-desktop-wsl-relay2" ]]; then
+  echo "socat already exists in $PROJECT_HOME/bin/container-desktop-wsl-relay"
+else
+  cd "$PROJECT_HOME/vendors/socat-${SOCAT_VERSION}"
 
-echo "Compress container-desktop-wsl-relay.exe"
-upx -9 container-desktop-wsl-relay.exe
-mkdir -p "$PROJECT_HOME/bin"
-cp container-desktop-wsl-relay.exe "$PROJECT_HOME/bin"
+  # Additional flags (if needed)
+  export CC="musl-gcc"
+  export LD="musl-ld"
+  export CFLAGS="-O2 -Wall"
+  export LDFLAGS="-static"
+  export TARGET=x86_64-linux-musl
+
+  ./configure \
+    --prefix="$PROJECT_HOME" \
+    --enable-msglevel=DEBUG \
+    --disable-largefile \
+    --disable-stats \
+    --disable-fdnum \
+    --disable-file \
+    --disable-creat \
+    --disable-socketpair \
+    --disable-termios \
+    --disable-ip4 \
+    --disable-ip6 \
+    --disable-rawip \
+    --disable-interface \
+    --disable-tcp \
+    --disable-udp \
+    --disable-udplite \
+    --disable-sctp \
+    --disable-dccp \
+    --disable-vsock \
+    --disable-namespaces \
+    --disable-posixmq \
+    --disable-socks4 \
+    --disable-socks4a \
+    --disable-socks5 \
+    --disable-openssl \
+    --disable-exec \
+    --disable-system \
+    --disable-shell \
+    --disable-pty \
+    --disable-fs \
+    --disable-readline \
+    --disable-tun \
+    --disable-sycls \
+    --disable-filan \
+    --disable-libwrap \
+    && echo "Configured socat with minimal features"
+
+  echo "Building socat"
+  make clean
+  make socat
+  strip -S socat
+  cp socat "$PROJECT_HOME/bin/container-desktop-wsl-relay"
+fi
