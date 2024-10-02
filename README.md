@@ -90,3 +90,5 @@ node.exe relay-test.js
 ## Notes
 
 - The spawned Windows native `container-desktop-wsl-relay.exe` is checking every `2` seconds if the parent process that spawned it has died, in such case it exits.
+- Why is the custom `socat` build static binary renamed - to be easily identifiable from `ps -aux`
+- Why the need for custom `socat` build - because users ignore it, because it is hard to ensure on all distributions supported by WSL, because I don't know how to write an equivalent myself.
