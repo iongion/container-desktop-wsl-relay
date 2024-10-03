@@ -35,7 +35,7 @@ sequenceDiagram
 In the default WSL distribution(Ubuntu), where the repo is cloned and where tests are made, golang and windows cross-compilation and optimization tools are needed.
 
 ```bash
-sudo apt-get install build-essential gcc-mingw-w64 musl-tools golang upx-ucl
+sudo apt-get install build-essential gcc-mingw-w64 musl-tools golang upx-ucl dotnet-sdk-8.0
 ```
 
 ## Building

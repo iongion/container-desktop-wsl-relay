@@ -25,7 +25,7 @@ import (
 
 // See https://github.com/docker/go-plugins-helpers/blob/main/sdk/windows_listener.go
 const (
-	IO_BUFFER_SIZE = 512
+	IO_BUFFER_SIZE = 32 * 1024 // 32KB
 	// AllowEveryone grants full access permissions for everyone.
 	AllowEveryone = "S:(ML;;NW;;;LW)D:(A;;0x12019f;;;WD)"
 	// AllowCurrentUser grants full access permissions for the current user.
@@ -39,7 +39,7 @@ var (
 	parentPid           int
 	namedPipe           string
 	permissions         string
-	bufferSize          int64
+	bufferSize          int
 	pidFile             string
 	pollInterval        = 2
 	unixSocket          string
@@ -87,10 +87,10 @@ func init() {
 	flag.StringVar(&namedPipe, "named-pipe", "\\\\.\\pipe\\container-desktop", "Named pipe to relay through")
 	flag.StringVar(&unixSocket, "unix-socket", "/var/run/docker.sock", "The Unix socket to relay through")
 	flag.StringVar(&permissions, "permissions", "AllowCurrentUser", fmt.Sprintf("Named pipe permissions specifier - see https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights\nAvailable are:\n\tAllowServiceSystemAdmin=%s\n\tAllowCurrentUser=%s\n\tAllowEveryone=%s\n", AllowServiceSystemAdmin, AllowCurrentUser, AllowEveryone))
-	flag.Int64Var(&bufferSize, "buffer-size", IO_BUFFER_SIZE, "I/O buffer size in bytes")
+	flag.IntVar(&bufferSize, "buffer-size", IO_BUFFER_SIZE, "I/O buffer size in bytes")
 	flag.StringVar(&pidFile, "pid-file", "", "PID file path - The native Windows path where the native Windows PID is to be written")
 	flag.StringVar(&relayProgramPath, "relay-program-path", "./socat-static", "The path to the WSL relay program")
-	flag.StringVar(&relayProgramOptions, "relay-program-options", "retry,forever", "The options to pass to the WSL relay program(socat UNIX-CONNECT options)")
+	flag.StringVar(&relayProgramOptions, "relay-program-options", "", "The options to pass to the WSL relay program(socat UNIX-CONNECT options)")
 	flag.Usage = func() {
 		flag.PrintDefaults()
 	}
@@ -104,74 +104,145 @@ func init() {
 	// log.SetOutput(mw)
 }
 
-var stdinCh = make(chan []byte)
+func readWithDeadline(pipe io.Reader, buffer []byte, timeout time.Duration) (int, error) {
+	readCh := make(chan struct {
+		n   int
+		err error
+	})
 
-func handleClient(conn net.Conn, stdin io.WriteCloser, stdout io.ReadCloser) {
+	// Run the pipe reading in a goroutine to be able to timeout
+	go func() {
+		n, err := pipe.Read(buffer)
+		readCh <- struct {
+			n   int
+			err error
+		}{n, err}
+	}()
+
+	select {
+	case result := <-readCh:
+		return result.n, result.err
+	case <-time.After(timeout):
+		return 0, fmt.Errorf("Timeout")
+	}
+}
+
+func handleClient(conn net.Conn, cmdArgs []string, ctx context.Context) {
 	defer conn.Close()
-	log.Printf("Client connected [%s]", conn.RemoteAddr().Network())
 
-	// Create channels for bidirectional communication
-	connCh := make(chan []byte)
+	log.Printf("Client connected [%s]\n", conn.RemoteAddr().Network())
 
-	// Read from stdin and send to channel
-	go func() {
-		for {
-			buffer := make([]byte, bufferSize)
-			n, err := stdout.Read(buffer)
-			if err != nil {
-				if err != io.EOF {
-					log.Printf("Error reading from stdin stdinCh: %v", err)
-				}
-				close(stdinCh) // Close the channel on error or EOF
-				return
-			}
-			stdinCh <- buffer[:n]
-		}
-	}()
+	log.Println("Spawning WSL relay executable: wsl.exe ", strings.Join(cmdArgs, " "))
+	cmd := exec.CommandContext(ctx, "wsl.exe", cmdArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	cmd.Stderr = os.Stderr
 
-	// Read from connection and send to channel
-	go func() {
-		for {
-			buffer := make([]byte, bufferSize)
-			n, err := conn.Read(buffer)
-			if err != nil {
-				if err != io.EOF {
-					log.Printf("Error reading from connection connCh: %v", err)
-				}
-				close(connCh)
-				return
-			}
-			connCh <- buffer[:n]
-		}
-	}()
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		log.Fatalf("Failed to create stdin pipe: %v", err)
+	}
+	defer stdinPipe.Close()
 
-	// Process data from both channels
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Fatalf("Failed to create stdout pipe: %v", err)
+	}
+	defer stdoutPipe.Close()
+
+	// Start the process
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("Failed to start Windows native STD relay executable: %v", err)
+	} else {
+		log.Printf("Started Windows native STD relay executable with PID %d\n", cmd.Process.Pid)
+	}
+
+	err = conn.SetReadDeadline(time.Now().Add(1000 * time.Millisecond))
+	if err != nil {
+		log.Println("Error setting read deadline:", err)
+		return
+	}
+
+	err = conn.SetWriteDeadline(time.Now().Add(5000 * time.Millisecond))
+	if err != nil {
+		log.Println("Error setting read deadline:", err)
+		return
+	}
+
+	// Request - Read from connection and write to stdin pipe
+	// Reading from the connection and writing to stdinPipe (relay data from client to WSL)
+	log.Println("Forwarding request from connection to stdin pipe")
 	for {
-		select {
-		case data, ok := <-stdinCh:
-			if !ok {
-				// stdin channel closed, stop processing
-				log.Printf("[stdin.closed] Client disconnected [%s]", conn.RemoteAddr().Network())
-				return
+		log.Println("Reading from connection")
+		// Read from connection and write to unix socket connection
+		buf := make([]byte, bufferSize)
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				log.Println("EOF from connection")
+				break
 			}
-			_, err := conn.Write(data)
-			if err != nil {
-				log.Printf("Error writing to connection: %v", err)
-				return
+			if err, ok := err.(net.Error); ok && err.Timeout() {
+				log.Println("[NAMED-PIPE] Deadline reached - read response")
+				break
 			}
-		case data, ok := <-connCh:
-			if !ok {
-				// connection channel closed, stop processing
-				log.Printf("[conn.closed] Client disconnected [%s]", conn.RemoteAddr().Network())
-				return
-			}
-			_, err := stdin.Write(data)
-			if err != nil {
-				log.Printf("Error writing to stdout: %v", err)
-				return
-			}
+			log.Printf("Error reading from connection: %v\n", err)
+			break
+		}
+		if n == 0 {
+			log.Println("EOF from connection - zero bytes read")
+			break
+		}
+		n, err = stdinPipe.Write(buf[:n])
+		if err != nil {
+			log.Printf("Error copying from connection to unix socket connection: %v\n", err)
+			break
+		} else {
+			log.Printf("Copied %d bytes from connection to unix socket connection\n", n)
 		}
 	}
+
+	// log.Println("Request relay complete - closing stdin pipe")
+	// stdinPipe.Close()
+
+	// Response - Read from stdout pipe and write to connection
+	// Reading from stdoutPipe and writing to connection (relay data from WSL back to client)
+	log.Println("Forwarding response from stdout to named pipe connection")
+
+	for {
+		log.Println("Reading from stdout")
+		// Read from connection and write to named pipe connection
+		buf := make([]byte, bufferSize)
+		// n, err := stdoutPipe.Read(buf)
+		n, err := readWithDeadline(stdoutPipe, buf, 1000*time.Millisecond)
+		if err != nil {
+			if err == io.EOF {
+				log.Println("EOF from stdoutPipe")
+			} else if err.Error() == "Timeout" {
+				log.Println("Timeout while reading from stdout pipe after")
+			} else {
+				log.Printf("Error reading from stdout pipe: %v\n", err)
+			}
+			log.Printf("Error reading from stdoutPipe: %v\n", err)
+			break
+		}
+		if n == 0 {
+			log.Println("EOF from stdoutPipe - zero bytes read")
+			break
+		}
+		log.Printf("Read %d bytes from stdoutPipe and forward them to named pipe connection: %s\n", n, string(buf[:n]))
+		n, err = conn.Write(buf[:n])
+		if err != nil {
+			log.Printf("Error copying from stdoutPipe to named pipe connection: %v\n", err)
+			break
+		} else {
+			log.Printf("Copied %d bytes from stdoutPipe to named pipe connection\n", n)
+		}
+	}
+
+	log.Println("WINDOWS NAMED PIPE - Relaying complete")
+	conn.Write(nil)
+	conn.Close()
+	cmd.Cancel()
 }
 
 func main() {
@@ -268,56 +339,15 @@ func main() {
 		relayProgramPath,
 		"STDIO",
 		fmt.Sprintf("UNIX-CONNECT:%s", strings.Join(cmdOpts, ",")),
+		// "--unix-socket",
+		// strings.Join(cmdOpts, ","),
 	}
-	log.Println("Starting Windows native STD relay executable with command: wsl.exe ", strings.Join(cmdArgs, " "))
-	cmd := exec.CommandContext(ctx, "wsl.exe", cmdArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		// Setpgid:    true,
-		// Pgid:       os.Getpid(),
-		// Foreground: foreground,
-		// Pdeathsig:  syscall.SIGINT,
-	}
-
-	// Redirect stdin and stdout to the subprocess (single connection)
-	stdinPipe, err := cmd.StdinPipe()
-	if err != nil {
-		log.Fatalf("Failed to create stdin pipe: %v", err)
-	}
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Fatalf("Failed to create stdout pipe: %v", err)
-	}
-
-	// Start the process
-	if err := cmd.Start(); err != nil {
-		log.Fatalf("Failed to start Windows native STD relay executable: %v", err)
-	} else {
-		log.Println("Windows executable started")
-	}
-
-	go func() {
-		log.Println("Waiting for Windows executable to exit")
-		if err := cmd.Wait(); err != nil {
-			log.Printf("Windows executable exited with error: %v", err)
-			os.Exit(1)
-		} else {
-			log.Println("Windows executable exited")
-		}
-	}()
-
-	pid := cmd.Process.Pid
-	if err != nil {
-		log.Fatal("Unable to read process group id", err)
-	} else {
-		log.Printf("Started Windows native STD relay executable with PID %d\n", pid)
-	}
-
 	log.Println("Waiting for client connections")
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Fatal("Relay server accept error:", err)
 		}
-		go handleClient(conn, stdinPipe, stdoutPipe)
+		go handleClient(conn, cmdArgs, ctx)
 	}
 }

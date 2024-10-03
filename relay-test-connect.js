@@ -11,7 +11,8 @@ async function pingSocket(namedPipe) {
     const statusConfig = {
         socketPath: namedPipe,
         baseURL: "http://d",
-        adapter
+        adapter,
+        timeout: 60000
     };
     console.debug("Checking status of relay server");
     const driver = axios.create(statusConfig);

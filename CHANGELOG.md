@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 1.0.8 - 2024-10-02
+
+### Changed
+
+- Given up on using the custom golang wrappers
+- Using custom fork/build of `winsocat.exe` and `socat` compiled with musl-gcc
+
 ## 1.0.6 - 2024-10-02
 
 ### Added
