@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package main
 
@@ -6,318 +7,308 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
-	"os/user"
-	"runtime"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Microsoft/go-winio"
-	"github.com/keybase/go-ps"
-)
-
-// See https://github.com/docker/go-plugins-helpers/blob/main/sdk/windows_listener.go
-const (
-	IO_BUFFER_SIZE = 512
-	// AllowEveryone grants full access permissions for everyone.
-	AllowEveryone = "S:(ML;;NW;;;LW)D:(A;;0x12019f;;;WD)"
-	// AllowCurrentUser grants full access permissions for the current user.
-	AllowCurrentUser = "D:P(A;;GA;;;$SID)"
-	// AllowServiceSystemAdmin grants full access permissions for Service, System, Administrator group and account.
-	AllowServiceSystemAdmin = "D:(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;LA)(A;ID;FA;;;LS)"
+	"github.com/containers/gvisor-tap-vsock/pkg/sshclient"
+	"github.com/containers/winquit/pkg/winquit"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
-	distribution        string
-	parentPid           int
-	namedPipe           string
-	permissions         string
-	bufferSize          int64
-	pidFile             string
-	pollInterval        = 2
-	unixSocket          string
-	relayProgramPath    string
-	relayProgramOptions string
+	namedPipe        string
+	sshConnection    string
+	sshTimeout       int
+	identityPath     string
+	tidPath          string
+	parentProcessPid int
+	// Relay arguments
+	distribution            string
+	relayProgramPath        string
+	watchProcessTermination bool
+	generateKeyPair         bool
+	port                    int
+	host                    string
+	bufferSize              int
+	pollInterval            int
 )
 
-var signalChan chan (os.Signal) = make(chan os.Signal, 1)
-
-func isProcessRunning(pid int) bool {
-	// See https://github.com/golang/go/issues/33814
-	// For testing shutdown use: powershell.exe -Command Start-Process -FilePath container-desktop-wsl-relay.exe -Wait
-	process, err := ps.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		// log.Printf("Checking for running process ID %d - %v\n", pid, process)
-		if process != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func watchParentProcess(parentPid int) {
-	for {
-		if parentPid > 0 {
-			if !isProcessRunning(parentPid) {
-				log.Printf("Parent process ID %d is no longer running - shutting down\n", parentPid)
-				signalChan <- syscall.SIGINT
-				return
-			}
-		} else {
-			log.Println("Parent process ID is not provided yet")
-		}
-		time.Sleep(time.Duration(pollInterval) * time.Second)
-	}
-}
+var relayProgramPid int = -1
 
 func init() {
-	flag.StringVar(&distribution, "distribution", os.Getenv("WSL_DISTRO_NAME"), "WSL Distribution name of the parent process")
-	flag.IntVar(&parentPid, "parent-pid", -1, "Parent WSL Distribution process ID")
+	flag.StringVar(&namedPipe, "named-pipe", "npipe:////./pipe/container-desktop", "Named pipe to relay through")
+	flag.StringVar(&sshConnection, "ssh-connection", "ssh://ubuntu@localhost:50022/var/run/docker.sock", "The SSH connection string")
+	flag.IntVar(&sshTimeout, "ssh-timeout", 5, "The SSH connection timeout in seconds")
+	flag.StringVar(&identityPath, "identity-path", "", "Path to the SSH connection private key")
+	flag.StringVar(&tidPath, "tid-path", "", "Thread ID file path")
+	// Relay arguments
+	flag.StringVar(&distribution, "distribution", "Ubuntu", "The WSL distribution")
+	flag.StringVar(&relayProgramPath, "relay-program-path", "", "Path to the relay program")
+	flag.StringVar(&host, "host", "127.0.0.1", "The SSH connection host")
+	flag.IntVar(&port, "port", 20022, "The SSH connection port")
+	flag.IntVar(&bufferSize, "buffer-size", 4096, "The I/O buffer size")
+	flag.BoolVar(&generateKeyPair, "generate-key-pair", false, "Generate SSH RSA key pair - it overwrites existing key pair")
+	flag.BoolVar(&watchProcessTermination, "watch-process-termination", false, "Watch for process termination(WSL patch)")
 	flag.IntVar(&pollInterval, "poll-interval", 2, "Parent process polling interval in seconds - default is 2 seconds")
-	flag.StringVar(&namedPipe, "named-pipe", "\\\\.\\pipe\\container-desktop", "Named pipe to relay through")
-	flag.StringVar(&unixSocket, "unix-socket", "/var/run/docker.sock", "The Unix socket to relay through")
-	flag.StringVar(&permissions, "permissions", "AllowCurrentUser", fmt.Sprintf("Named pipe permissions specifier - see https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights\nAvailable are:\n\tAllowServiceSystemAdmin=%s\n\tAllowCurrentUser=%s\n\tAllowEveryone=%s\n", AllowServiceSystemAdmin, AllowCurrentUser, AllowEveryone))
-	flag.Int64Var(&bufferSize, "buffer-size", IO_BUFFER_SIZE, "I/O buffer size in bytes")
-	flag.StringVar(&pidFile, "pid-file", "", "PID file path - The native Windows path where the native Windows PID is to be written")
-	flag.StringVar(&relayProgramPath, "relay-program-path", "./socat-static", "The path to the WSL relay program")
-	flag.StringVar(&relayProgramOptions, "relay-program-options", "retry,forever", "The options to pass to the WSL relay program(socat UNIX-CONNECT options)")
+	// Flags
 	flag.Usage = func() {
 		flag.PrintDefaults()
 	}
 	log.SetPrefix("[windows]")
 	log.SetOutput(os.Stderr)
-	// logFile, err := os.OpenFile("container-desktop-wsl-relay.exe.log", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// mw := io.MultiWriter(os.Stderr, logFile)
-	// log.SetOutput(mw)
 }
 
-var stdinCh = make(chan []byte)
-
-func handleClient(conn net.Conn, stdin io.WriteCloser, stdout io.ReadCloser) {
-	defer conn.Close()
-	log.Printf("Client connected [%s]", conn.RemoteAddr().Network())
-
-	// Create channels for bidirectional communication
-	connCh := make(chan []byte)
-
-	// Read from stdin and send to channel
-	go func() {
-		for {
-			buffer := make([]byte, bufferSize)
-			n, err := stdout.Read(buffer)
-			if err != nil {
-				if err != io.EOF {
-					log.Printf("Error reading from stdin stdinCh: %v", err)
-				}
-				close(stdinCh) // Close the channel on error or EOF
-				return
-			}
-			stdinCh <- buffer[:n]
-		}
-	}()
-
-	// Read from connection and send to channel
-	go func() {
-		for {
-			buffer := make([]byte, bufferSize)
-			n, err := conn.Read(buffer)
-			if err != nil {
-				if err != io.EOF {
-					log.Printf("Error reading from connection connCh: %v", err)
-				}
-				close(connCh)
-				return
-			}
-			connCh <- buffer[:n]
-		}
-	}()
-
-	// Process data from both channels
-	for {
-		select {
-		case data, ok := <-stdinCh:
-			if !ok {
-				// stdin channel closed, stop processing
-				log.Printf("[stdin.closed] Client disconnected [%s]", conn.RemoteAddr().Network())
-				return
-			}
-			_, err := conn.Write(data)
-			if err != nil {
-				log.Printf("Error writing to connection: %v", err)
-				return
-			}
-		case data, ok := <-connCh:
-			if !ok {
-				// connection channel closed, stop processing
-				log.Printf("[conn.closed] Client disconnected [%s]", conn.RemoteAddr().Network())
-				return
-			}
-			_, err := stdin.Write(data)
-			if err != nil {
-				log.Printf("Error writing to stdout: %v", err)
-				return
-			}
-		}
+func testSSHConnection() {
+	dest, err := url.Parse(sshConnection)
+	if err != nil {
+		log.Fatal(err)
 	}
+	log.Printf("Testing SSH connection to %s\n", dest)
+	// ssh config
+	if err != nil {
+		log.Fatal(err)
+	}
+	user := dest.User.Username()
+	// Methods
+	auth := []ssh.AuthMethod{}
+	if len(identityPath) > 0 {
+		key, err := os.ReadFile(identityPath)
+		if err != nil {
+			log.Fatalf("Unable to read private key: %v\n", err)
+		}
+		log.Printf("Parsing private key from %s\n", identityPath)
+		signer, err := ssh.ParsePrivateKey(key)
+		if err != nil {
+			log.Fatalf("Unable to parse private key: %v\n", err)
+		}
+		auth = append(auth, ssh.PublicKeys(signer))
+	}
+	config := &ssh.ClientConfig{
+		User:            user,
+		Auth:            auth,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         time.Second * time.Duration(sshTimeout),
+	}
+	// connect to ssh server
+	conn, err := ssh.Dial("tcp", dest.Host, config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+}
+
+func testNamedPipe() {
+	dest, err := url.Parse(namedPipe)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Ensure named pipe is not already opened
+	pipePath := strings.ReplaceAll(dest.Path, "/", "\\")
+	log.Printf("Trying to open named pipe %s\n", pipePath)
+	f, err := winio.DialPipe(pipePath, nil)
+	if err != nil {
+		log.Println("Pipe is not opened, good...")
+	} else {
+		f.Close()
+		log.Fatalf("Pipe already opened\n")
+	}
+}
+
+func getWSLPath(distribution string, windowsPath string) (string, error) {
+	cmd := exec.Command("wsl.exe", "--distribution", distribution, "--exec", "wslpath", windowsPath)
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		log.Printf("Error getting WSL path: %v\n", err)
+		return "", err
+	}
+	log.Printf("WSL path for %s: %s\n", windowsPath, string(out))
+	return strings.TrimSpace(string(out)), nil
+}
+
+func startRelayProgram(ctx context.Context) error {
+	// Start the relay program
+	wslIdentityPath, err := getWSLPath(distribution, identityPath)
+	if err != nil {
+		log.Printf("Error getting WSL path: %v\n", err)
+		return err
+	}
+	args := []string{
+		"--distribution",
+		distribution,
+		"--exec",
+		relayProgramPath,
+		"--host", host,
+		"--port", fmt.Sprintf("%d", port),
+		"--buffer-size", fmt.Sprintf("%d", bufferSize),
+		"--poll-interval", fmt.Sprintf("%d", pollInterval),
+		"--identity-path", wslIdentityPath,
+		"--parent-process-pid", strconv.Itoa(os.Getpid()),
+	}
+	if watchProcessTermination {
+		args = append(args, "--watch-process-termination")
+	}
+	if generateKeyPair {
+		args = append(args, "--generate-key-pair")
+	}
+	log.Printf("Starting relay program with args: wsl.exe %s\n", strings.Join(args, " "))
+	relay := exec.CommandContext(ctx, "wsl.exe", args...)
+	relay.SysProcAttr = &syscall.SysProcAttr{
+		// CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
+		// HideWindow: false,
+	}
+	relay.Stdout = os.Stdout
+	relay.Stderr = os.Stderr
+	if err := relay.Start(); err != nil {
+		log.Fatalf("Error starting relay program: %v\n", err)
+		return err
+	}
+	relayProgramPid = relay.Process.Pid
+	log.Printf("Relay program started with PID: %d\n", relayProgramPid)
+	return relay.Wait()
 }
 
 func main() {
 	flag.Parse()
+	log.Println("Starting container-desktop-ssh-relay")
 
-	// Handle program exit
-	defer close(signalChan)
-	signal.Notify(signalChan,
+	testNamedPipe()
+
+	if len(tidPath) > 0 {
+		_, err := saveThreadId(tidPath)
+		if err != nil {
+			log.Fatalf("Error saving thread ID: %v\n", err)
+		}
+	}
+
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	group, ctx := errgroup.WithContext(ctx)
+	defer cancelFunc()
+
+	if len(relayProgramPath) > 0 {
+		log.Println("Starting relay program")
+		group.Go(func() error {
+			return startRelayProgram(ctx)
+		})
+	}
+
+	time.Sleep(5 * time.Second)
+	testSSHConnection()
+
+	stopChan := make(chan os.Signal, 1)
+	signal.Notify(stopChan,
 		os.Interrupt,
 		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
 		syscall.SIGQUIT,
 		syscall.SIGSEGV)
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	defer cancelFunc()
-
-	// Termination signals
 	go func() {
-		<-signalChan
+		<-stopChan
 		log.Println("Received termination signal")
-		signal.Stop(signalChan)
-		log.Println("Canceling context")
+		signal.Stop(stopChan)
 		cancelFunc()
-		log.Println("Exiting")
+		if relayProgramPid > -1 {
+			log.Printf("Killing relay program with PID: %d\n", relayProgramPid)
+			err := exec.Command("taskkill", "/f", "/pid", strconv.Itoa(relayProgramPid)).Run()
+			if err != nil {
+				log.Printf("Error killing relay program %d: %v\n", relayProgramPid, err)
+			}
+		}
 		os.Exit(0)
 	}()
 
-	// Parse security descriptor
-	securityDescriptor := AllowEveryone
-	if len(permissions) > 0 {
-		switch permissions {
-		case "AllowServiceSystemAdmin":
-			securityDescriptor = AllowServiceSystemAdmin
-		case "AllowCurrentUser":
-			securityDescriptor = AllowCurrentUser
-		case "AllowEveryone":
-			securityDescriptor = AllowEveryone
-		default:
-			securityDescriptor = permissions
+	log.Println("Setting up proxies started")
+	err := setupProxies(ctx, group, namedPipe, sshConnection, identityPath)
+	if err != nil {
+		log.Fatalf("Unable to setup proxies: %s\n", err.Error())
+	}
+
+	log.Println("Setting up proxies completed - waiting for worker group")
+	if err := group.Wait(); err != nil {
+		log.Fatalf("Error occurred in execution group: %s\n", err.Error())
+	}
+}
+
+func setupProxies(ctx context.Context, g *errgroup.Group, source string, destination string, identity string) error {
+	var (
+		src  *url.URL
+		dest *url.URL
+		err  error
+	)
+	if strings.Contains(source, "://") {
+		src, err = url.Parse(source)
+		if err != nil {
+			return err
 		}
-		if strings.Contains(securityDescriptor, "$SID") {
-			currentUser, err := user.Current()
-			if err != nil {
-				log.Println("Relay server error retrieving current user:", err)
-				return
+	} else {
+		src = &url.URL{
+			Scheme: "unix",
+			Path:   source,
+		}
+	}
+
+	dest, err = url.Parse(destination)
+	if err != nil {
+		return err
+	}
+
+	g.Go(func() error {
+		log.Printf("Creating SSH relay from %s to %s\n", src.String(), dest.String())
+		forward, err := sshclient.CreateSSHForward(ctx, src, dest, identity, nil)
+		if err != nil {
+			return err
+		}
+		log.Printf("Forwarding %s to %s\n", src.String(), dest.String())
+		go func() {
+			<-ctx.Done()
+			// Abort pending accepts
+			log.Println("Closing forward")
+			forward.Close()
+		}()
+	loop:
+		for {
+			select {
+			case <-ctx.Done():
+				break loop
+			default:
+				// proceed
 			}
-			securityDescriptor = strings.Replace(securityDescriptor, "$SID", currentUser.Uid, 1)
+			err := forward.AcceptAndTunnel(ctx)
+			if err != nil {
+				log.Fatalf("Error occurred handling ssh forwarded connection: %q\n", err)
+			}
 		}
-		log.Printf("Computed permissions are: %s\n", securityDescriptor)
-	}
+		return nil
+	})
 
-	// Write the PID of current process
-	if len(pidFile) > 0 {
-		log.Printf("Writing relay Windows PID %d to %s\n", os.Getpid(), pidFile)
-		pidContents := []byte(strconv.FormatInt(int64(os.Getpid()), 10))
-		err := os.WriteFile(pidFile, pidContents, 0644)
-		if err != nil {
-			panic(err)
-		}
-	}
+	return nil
+}
 
-	if parentPid > 0 {
-		log.Printf("Reported parent process ID is %d\n", parentPid)
-		// if os.Getppid() != int(parentPid) {
-		// 	log.Fatalf("Parent process ID %d does not match expected %d", os.Getppid(), parentPid)
-		// }
-	}
-
-	// Configure named pipe
-	pc := &winio.PipeConfig{
-		SecurityDescriptor: securityDescriptor,
-		MessageMode:        false,
-		InputBufferSize:    int32(bufferSize),
-		OutputBufferSize:   int32(bufferSize),
-	}
-	// Listen on the named pipe
-	listener, err := winio.ListenPipe(namedPipe, pc)
-	if err != nil {
-		log.Fatal("Relay server listen error:", err)
-	}
-	defer listener.Close()
-	log.Printf("Relay server is now listening on: %s\n", namedPipe)
-	go watchParentProcess(os.Getppid())
-	cmdOpts := []string{
-		unixSocket,
-	}
-	if len(relayProgramOptions) > 0 {
-		cmdOpts = append(cmdOpts, relayProgramOptions)
-	}
-	cmdArgs := []string{
-		"--distribution", distribution,
-		"--exec",
-		relayProgramPath,
-		"STDIO",
-		fmt.Sprintf("UNIX-CONNECT:%s", strings.Join(cmdOpts, ",")),
-	}
-	log.Println("Starting Windows native STD relay executable with command: wsl.exe ", strings.Join(cmdArgs, " "))
-	cmd := exec.CommandContext(ctx, "wsl.exe", cmdArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		// Setpgid:    true,
-		// Pgid:       os.Getpid(),
-		// Foreground: foreground,
-		// Pdeathsig:  syscall.SIGINT,
-	}
-
-	// Redirect stdin and stdout to the subprocess (single connection)
-	stdinPipe, err := cmd.StdinPipe()
-	if err != nil {
-		log.Fatalf("Failed to create stdin pipe: %v", err)
-	}
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		log.Fatalf("Failed to create stdout pipe: %v", err)
-	}
-
-	// Start the process
-	if err := cmd.Start(); err != nil {
-		log.Fatalf("Failed to start Windows native STD relay executable: %v", err)
-	} else {
-		log.Println("Windows executable started")
-	}
-
-	go func() {
-		log.Println("Waiting for Windows executable to exit")
-		if err := cmd.Wait(); err != nil {
-			log.Printf("Windows executable exited with error: %v", err)
+func saveThreadId(path string) (uint32, error) {
+	stateDir := filepath.Dir(path)
+	if _, err := os.Stat(stateDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(stateDir, 0755); err != nil {
+			log.Println("Error creating state directory: " + err.Error())
 			os.Exit(1)
-		} else {
-			log.Println("Windows executable exited")
 		}
-	}()
-
-	pid := cmd.Process.Pid
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
 	if err != nil {
-		log.Fatal("Unable to read process group id", err)
-	} else {
-		log.Printf("Started Windows native STD relay executable with PID %d\n", pid)
+		return 0, err
 	}
-
-	log.Println("Waiting for client connections")
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Fatal("Relay server accept error:", err)
-		}
-		go handleClient(conn, stdinPipe, stdoutPipe)
-	}
+	defer file.Close()
+	tid := winquit.GetCurrentMessageLoopThreadId()
+	fmt.Fprintf(file, "%d:%d\n", os.Getpid(), tid)
+	return tid, nil
 }

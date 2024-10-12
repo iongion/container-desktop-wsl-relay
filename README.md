@@ -12,7 +12,7 @@ Think of it as the inverse of `npiperelay.exe`
 
 ## Using the named pipe
 
-Flow of communication
+Flow of communication when using socat relay
 
 ```mermaid
 sequenceDiagram
@@ -23,6 +23,20 @@ sequenceDiagram
     UnixSocket-->>WSL: Write socket data to STDOUT 
     NamedPipe-->>WSL: Write data to WSL process STDIN
     WSL-->>NamedPipe: Read data from WSL process STDOUT
+    NamedPipe<<-->>UnixSocket: Bidirectional communication (unix socket <=> named pipe)
+```
+
+Flow of communication when using sshd relay
+
+```mermaid
+sequenceDiagram
+    Windows-->>Windows: Spawn native windows container-desktop-relay.exe
+    Windows-->>NamedPipe: Spawn named pipe server
+    Windows-->>WSL: Launch WSL linux sshd server - Listen to TCP
+    WSL-->>UnixSocket: Dial UNIX socket - Write SSH data to unix socket
+    UnixSocket-->>WSL: Read UNIX socket data - Write socket data to SSH socket
+    NamedPipe-->>WSL: Write named pipe data to WSL SSH socket
+    WSL-->>NamedPipe: Read data from WSL SSH socket - Write to named pipe
     NamedPipe<<-->>UnixSocket: Bidirectional communication (unix socket <=> named pipe)
 ```
 
@@ -73,19 +87,32 @@ node.exe relay-test.js
 
 ## Usage
 
-From a WSL terminal bash console
+Example with SSH relay - from a WSL terminal bash console
 
 ```bash
 RELAY_SOCKET=$(docker context inspect --format json | jq -e ".[0].Endpoints.docker.Host | sub(\"unix://\"; \"\")" | tr -d '"')
 RELAY_PIPE="\\\\.\\pipe\\container-desktop-test"
-RELAY_PROGRAM="$PROJECT_HOME/bin/container-desktop-wsl-relay"
+RELAY_PROGRAM="$PROJECT_HOME/bin/container-desktop-ssh-relay-sshd"
 
-./bin/container-desktop-wsl-relay.exe \
-    --distribution="$WSL_DISTRO_NAME" \
-    --named-pipe="$RELAY_PIPE" \
-    --unix-socket="$RELAY_SOCKET" \
-    --relay-program-path="$RELAY_PROGRAM" \
-    --relay-program-options="retry,forever"
+./bin/container-desktop-ssh-relay.exe \
+  --named-pipe \
+  "npipe:////./pipe/container-desktop-test" \
+  --ssh-connection \
+  "ssh://istoica@localhost:50508/var/run/docker.sock" \
+  --ssh-timeout \
+  15 \
+  --identity-path \
+  "./temp/id_rsa" \
+  --distribution \
+  "Ubuntu-24.04" \
+  --relay-program-path \
+  "./bin/container-desktop-ssh-relay-sshd" \
+  --watch-process-termination \
+  "--generate-key-pair" \
+  --host \
+  "localhost" \
+  --port \
+  "50508"
 ```
 
 Test using a NodeJS `child_process` started by the **Windows** native `node.exe` interpreter. This can be executed from any shell.

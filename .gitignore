@@ -24,6 +24,7 @@ container-desktop-wsl-relay.exe
 vendors/
 vendor/
 bin/
+temp/
 
 # Go workspace file
 go.work

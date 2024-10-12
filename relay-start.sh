@@ -15,11 +15,16 @@ SCRIPTPATH=$dir/$(basename -- "$SCRIPTPATH") || exit
 PROJECT_HOME="$(dirname "$SCRIPTPATH")"
 
 RELAY_SOCKET=$(docker context inspect --format json | jq -e ".[0].Endpoints.docker.Host | sub(\"unix://\"; \"\")" | tr -d '"')
-RELAY_PIPE="\\\\.\\pipe\\container-desktop-test"
-RELAY_PROGRAM="$PROJECT_HOME/bin/container-desktop-wsl-relay"
+RELAY_PIPE="npipe:////./pipe/container-desktop-test"
+RELAY_SSH_PORT=20022
+RELAY_SSH_USER=istoica
+RELAY_SSH_HOST=localhost
 
-./bin/container-desktop-wsl-relay.exe \
-  --distribution="$WSL_DISTRO_NAME" \
-  --named-pipe="$RELAY_PIPE" \
-  --unix-socket="$RELAY_SOCKET" \
-  --relay-program-path="$RELAY_PROGRAM"
+./relay-build.sh
+
+./bin/container-desktop-ssh-relay.exe \
+  --generate-key-pair \
+  --identity-path "$PROJECT_HOME/temp/ssh_relay_key" \
+  --named-pipe "$RELAY_PIPE" \
+  --ssh-connection "ssh://${RELAY_SSH_USER}@${RELAY_SSH_HOST}:${RELAY_SSH_PORT}${RELAY_SOCKET}" \
+  --ssh-timeout 15
